@@ -95,6 +95,8 @@
                 mod_state                   :: term(), % Callback module state
                 token                       :: string(),
                 secret                      :: string(),
+                consumer_key                :: string(),
+                consumer_secret             :: string(),
                 req_id                      :: undefined | ibrowse:req_id(),
                 buffer                      :: binary(),
                 http_status                 :: string(),
@@ -125,26 +127,26 @@ behaviour_info(_Other) ->
 %%% @doc  Starts a generic server.
 -spec start(Mod::atom(), Args::term(), Options::[start_option()]) -> start_result().
 start(Mod, Args, Options) ->
-  {Token, Secret, StreamTimeout, OtherOptions} = parse_start_options(Options),
-  gen_server:start(?MODULE, {Mod, Args, Token, Secret, StreamTimeout}, OtherOptions).
+  {Token, Secret, CKey, CSecret, StreamTimeout, OtherOptions} = parse_start_options(Options),
+  gen_server:start(?MODULE, {Mod, Args, Token, Secret, CKey, CSecret, StreamTimeout}, OtherOptions).
 
 %%% @doc  Starts a named generic server.
 -spec start(Name::{local|global, atom()}, Mod::atom(), Args::term(), Options::[start_option()]) -> start_result().
 start(Name, Mod, Args, Options) ->
-  {Token, Secret, StreamTimeout, OtherOptions} = parse_start_options(Options),
-  gen_server:start(Name, ?MODULE, {Mod, Args, Token, Secret, StreamTimeout}, OtherOptions).
+  {Token, Secret, CKey, CSecret, StreamTimeout, OtherOptions} = parse_start_options(Options),
+  gen_server:start(Name, ?MODULE, {Mod, Args, Token, Secret, CKey, CSecret, StreamTimeout}, OtherOptions).
 
 %%% @doc  Starts and links a generic server.
 -spec start_link(Mod::atom(), Args::term(), Options::[start_option()]) -> start_result().
 start_link(Mod, Args, Options) ->
-  {Token, Secret, StreamTimeout, OtherOptions} = parse_start_options(Options),
-  gen_server:start_link(?MODULE, {Mod, Args, Token, Secret, StreamTimeout}, OtherOptions).
+  {Token, Secret, CKey, CSecret, StreamTimeout, OtherOptions} = parse_start_options(Options),
+  gen_server:start_link(?MODULE, {Mod, Args, Token, Secret, CKey, CSecret, StreamTimeout}, OtherOptions).
 
 %%% @doc  Starts and links a named generic server.
 -spec start_link(Name::{local|global, atom()}, Mod::atom(), Args::term(), Options::[start_option()]) -> start_result().
 start_link(Name, Mod, Args, Options) ->
-  {Token, Secret, StreamTimeout, OtherOptions} = parse_start_options(Options),
-  gen_server:start_link(Name, ?MODULE, {Mod, Args, Token, Secret, StreamTimeout}, OtherOptions).
+  {Token, Secret, CKey, CSecret, StreamTimeout, OtherOptions} = parse_start_options(Options),
+  gen_server:start_link(Name, ?MODULE, {Mod, Args, Token, Secret, CKey, CSecret, StreamTimeout}, OtherOptions).
 
 %%% @doc  Starts using the <a href="http://dev.twitter.com/pages/streaming_api_methods#statuses-filter">statuses/filter</a> method to get results
 -spec filter(server(), [filter_option() | ibrowse:option()]) -> ok.
@@ -202,15 +204,17 @@ current_method(Server) ->
 
 %% @hidden
 -spec init({atom(), term(), string(), string(), pos_integer()}) -> {ok, state()} | ignore | {stop, term()}.
-init({Mod, InitArgs, Token, Secret, StreamTimeout}) ->
+init({Mod, InitArgs, Token, Secret, CKey, CSecret, StreamTimeout}) ->
   _Seed = random:seed(erlang:now()),
   case Mod:init(InitArgs) of
     {ok, ModState} ->
-      {ok, #state{module        = Mod,
-                  mod_state     = ModState,
-                  token         = Token,
-                  secret        = Secret,
-                  stream_timeout= StreamTimeout}};
+      {ok, #state{module          = Mod,
+                  mod_state       = ModState,
+                  token           = Token,
+                  secret          = Secret,
+                  consumer_key    = CKey,
+                  consumer_secret = CSecret,
+                  stream_timeout  = StreamTimeout}};
     Other ->
       Other
   end.
@@ -254,7 +258,13 @@ handle_cast(M = {Method, Options}, State = #state{token = Token, secret = Secret
     undefined -> ok;
     Timer -> _ = erlang:cancel_timer(Timer), ok
   end,
-  case connect(Url, QueryString, IOptions, Token, Secret) of
+  Connect = case {State#state.consumer_key, State#state.consumer_secret} of
+                {CKey, CSecret} when CKey =/= undefined; CSecret =/= undefined ->
+                    connect(Url, QueryString, IOptions, Token, Secret, CKey, CSecret);
+                {_, _} ->
+                    connect(Url, QueryString, IOptions, Token, Secret)
+            end,
+  case Connect of
     {ok, ReqId} ->
       stream_close(OldReqId),
       NewState = State#state{req_id = ReqId, method = M, reconnect_timer = undefined,
@@ -441,7 +451,12 @@ parse_start_options(Options) ->
                     undefined -> 90000;
                     ST -> ST
                   end,
-  {Token, Secret, StreamTimeout, proplists:delete(token, proplists:delete(secret, Options))}.
+  CKey    = proplists:get_value(consumer_key, Options),
+  CSecret = proplists:get_value(consumer_secret, Options),
+  NewOptions = lists:foldl(fun(X, Acc) ->
+                                   proplists:delete(X, Acc)
+                           end, Options, [token,secret,consumer_key,consumer_secret]),
+  {Token, Secret, CKey, CSecret, StreamTimeout, NewOptions}.
 
 extract_query_string(Options) ->
   extract_query_string(Options, [], []).
@@ -526,8 +541,11 @@ extract_jsons([Next | Rest], Acc) ->
   extract_jsons(Rest, [Json | Acc]).
 
 connect(Url, Qs, IOptions, Token, Secret) ->
-  {ok, CKey} = application:get_env(itweet, consumer_key),
+  {ok, CKey}    = application:get_env(itweet, consumer_key),
   {ok, CSecret} = application:get_env(itweet, consumer_secret),
+  connect(Url, Qs, IOptions, Token, Secret, CKey, CSecret).
+
+connect(Url, Qs, IOptions, Token, Secret, CKey, CSecret) ->
   Consumer = {CKey, CSecret, hmac_sha1},
 
   % Execute the request.
