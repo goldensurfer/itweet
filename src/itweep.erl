@@ -87,7 +87,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 -define(INITIAL_BACKOFF, 10000).
-
+-define(STREAM_TIMEOUT, 25000).
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% INTERNALS
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -95,16 +95,16 @@
                 mod_state                   :: term(), % Callback module state
                 token                       :: string(),
                 secret                      :: string(),
-                consumer_key                :: string(),
-                consumer_secret             :: string(),
+                consumer_key                :: undefined | string(),
+                consumer_secret             :: undefined | string(),
                 req_id                      :: undefined | ibrowse:req_id(),
                 buffer                      :: binary(),
-                http_status                 :: string(),
+                http_status                 :: undefined | string(),
                 http_headers                :: [{string(), string()}],
                 method= rest                :: method(),
                 backoff = ?INITIAL_BACKOFF  :: pos_integer(),
                 reconnect_timer             :: undefined | reference(),
-                stream_timeout = 90000      :: pos_integer()
+                stream_timeout              :: pos_integer()
                }).
 -type state() :: #state{}.
 
@@ -411,6 +411,8 @@ handle_info({ibrowse_async_response_end, ReqId}, State = #state{req_id      = Re
   end;
 handle_info({ibrowse_async_response_end, _OldReqId}, State) ->
   {noreply, State, timeout(State)};
+handle_info({ibrowse_async_response_timeout, _OldReqId}, State = #state{method = Method}) ->
+    handle_info({reconnect, Method}, State);
 %% RECONNECTION ------------------------------------------------------------------------------------
 handle_info({reconnect, Method}, State = #state{method = wait}) ->
   error_logger:info_msg("~p, ~p - ~p: Reconnecting...~n", [self(), calendar:local_time(), ?MODULE]),
@@ -448,7 +450,7 @@ parse_start_options(Options) ->
                P -> P
              end,
   StreamTimeout = case proplists:get_value(stream_timeout, Options) of
-                    undefined -> 90000;
+                    undefined -> ?STREAM_TIMEOUT;
                     ST -> ST
                   end,
   CKey    = proplists:get_value(consumer_key, Options),
@@ -550,7 +552,9 @@ connect(Url, Qs, IOptions, Token, Secret, CKey, CSecret) ->
 
   % Execute the request.
   try oauth:get(Url, Qs, Consumer, Token, Secret,
-                [{stream_to, {self(), once}},{response_format, binary} | IOptions]
+                [{stream_to,       {self(), once}},
+                 {response_format, binary},
+                 {connect_timeout, infinity} | IOptions]
    ) of
     {ibrowse_req_id, ReqId} ->
       {ok, ReqId};
@@ -572,5 +576,5 @@ connect(Url, Qs, IOptions, Token, Secret, CKey, CSecret) ->
 
 timeout(#state{method = rest}) -> infinity;
 timeout(#state{method = wait}) -> infinity;
-timeout(#state{http_status = "200", stream_timeout = Timeout}) -> Timeout;
+timeout(#state{http_status = HS, stream_timeout = Timeout}) when HS =:= "200"; HS =:= undefined -> Timeout;
 timeout(_) -> infinity.
