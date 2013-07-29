@@ -295,6 +295,7 @@ handle_info({ibrowse_async_headers, ReqId, Code, Headers}, State = #state{req_id
     State#state{http_status = Code,
                 http_headers= Headers,
                 buffer      = <<>>},
+    io:fwrite("Headers: ~p~n", [Headers]),
   case run_handler(fun() -> Mod:handle_event(stream_start, null, ModState) end) of
     {ok, NewModSt} ->
       ok = ibrowse:stream_next(ReqId),
