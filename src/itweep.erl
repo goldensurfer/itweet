@@ -419,7 +419,7 @@ handle_info({reconnect, Method}, State = #state{method = wait}) ->
   handle_cast(Method, State#state{reconnect_timer = undefined});
 handle_info({reconnect, _Method}, State) -> %% It's no longer waiting
   error_logger:info_msg("~p, ~p - ~p: Already econnected...~n", [self(), calendar:local_time(), ?MODULE]),
-  {noreply, State, timeout(State)};
+  {noreply, State, 1000};
 %% OTHERs ------------------------------------------------------------------------------------------
 handle_info(Info, State = #state{module = Mod, mod_state = ModState}) ->
   case run_handler(fun() -> Mod:handle_info(Info, ModState) end) of
