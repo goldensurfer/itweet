@@ -1,27 +1,14 @@
-all:
-	rebar get-deps && rebar compile
+PROJECT = itweet
 
-clean:
-	rebar clean
+ERLC_OPTS = +debug_info +warn_export_all +warn_export_vars +warn_shadow_vars +warn_obsolete_guard
 
-build_plt: all
-	rebar skip_deps=true build-plt
+PLT_APPS = hipe sasl mnesia crypto compiler syntax_tools
+DIALYZER_OPTS = -Werror_handling -Wrace_conditions -Wunmatched_returns | fgrep -v -f ./dialyzer.ignore-warning
 
-analyze: all
-	dialyzer -pa deps/*/ebin --plt ~/.itweet_dialyzer_plt -Wunmatched_returns -Werror_handling -Wbehaviours ebin
+DEPS_DIR = ../../deps
+DEPS = oauth ibrowse
 
-doc: all
-	rebar skip_deps=true doc
+dep_oauth = https://github.com/goldensurfer/erlang-oauth 1.2
+dep_ibrowse = https://github.com/goldensurfer/ibrowse 1.2
 
-xref: all
-	rebar skip_deps=true xref
-
-test: all
-	if [ -f test.config ]; then \
-		erl -noshell -config test -pa ebin -pa deps/*/ebin +Bc +K true -smp enable -s crypto -s ibrowse -s ssl -s itweet -run itweep_tests main; \
-	else \
-		erl -noshell -pa ebin -pa deps/*/ebin +Bc +K true -smp enable -s crypto -s ibrowse -s ssl -s itweet -run itweep_tests main; \
-	fi
-
-shell: all
-	erl -pa ebin -pa deps/*/ebin +Bc +K true -smp enable -boot start_sasl -s crypto -s ibrowse -s ssl -s itweet
+include erlang.mk
